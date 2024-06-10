@@ -1,0 +1,1737 @@
+---
+title: "Likes and Shares: Understanding User Engagement Markers on Online Platforms"
+output:
+  html_document:
+    code_folding: hide
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# installing the libraries 
+library(tidyverse)
+library(dplyr)
+library(ltm)
+library(psych)
+library(lavaan)
+library(sjPlot)
+library(pscl)
+library(corrplot)
+library(ggplot2)
+library(gtsummary)
+library(gt)
+library(labelled)
+library(webshot)
+library(magick)
+```
+
+
+## installing the data and choosing the right variables
+
+```{r}
+data <- read.csv("/Users/daragraceva/Downloads/data.csv")
+```
+
+```{r}
+# creating a variables for gender specificity in texts 
+data$text_gender <- as.factor(case_when(data$text==1~"f",data$text==2~"n",
+                              data$text==3~"n",data$text==4~"m",
+                              data$text==5~"m",data$text==6~"f",
+                              data$text==7~"m",data$text==8~"n"))
+# choosing the needed variables
+data <- data %>%
+  dplyr::select(text_gender, starts_with("intent_"), dislike, like, share, save, author_knowledge, author_objectivity, author_adequacy, author_smartness, condition, subject_sex, particip_id, subject_age, subject_edu)
+```
+
+```{r}
+#text condition
+data <- data %>%
+mutate(condition = as.factor(condition),
+con_num = case_when(condition == 'neutral' ~ 1, condition == 'low_intensity' ~ 2, condition == 'moderate_intensity' ~ 3, condition == 'high_intensity' ~ 4),
+condition_upd = as.factor(con_num))
+# additional factor variable
+levels(data$condition_upd) <- c("neutral","low_intensity","moderate_intensity","high_intensity")
+```
+
+
+```{r}
+# creating a variable with average perceived expertise
+data$expert <- (data$author_knowledge + data$author_objectivity + data$author_adequacy + data$author_smartness)/4
+
+# creating a variable with average perceived persuasion attempt 
+data$pers_att <- (data$intent_direct + data$intent_manipulate + data$intent_convince)/3
+```
+
+<br><br>
+
+**The distribution of levels of education:**
+```{r}
+table(data$subject_edu)
+```
+
+<br><br>
+
+**The distribution of texts with different gender of the author:**
+```{r}
+table(data$text_gender)
+```
+
+<br><br>
+
+**The distribution of perceived expertise**
+```{r}
+describe(data$expert)
+describe(data$pers_att)
+```
+
+<br><br>
+
+**checking for association between intensity level and perceived expertise:**
+
+<br><br>
+
+assumptions:
+```{r}
+shapiro_test_results <- data %>% 
+  group_by(condition_upd) %>% 
+  summarize(shapiro_p_value = shapiro.test(expert)$p.value)
+
+print(shapiro_test_results)
+```
+
+<br><br>
+
+non-paramtric anova:
+```{r}
+kruskal_result <- kruskal.test(expert ~ condition_upd, data = data)
+kruskal_result
+```
+
+<br><br>
+
+checking for association between intensity level and persuasion attempt
+```{r}
+shapiro_test_results <- data %>% 
+  group_by(condition_upd) %>% 
+  summarize(shapiro_p_value = shapiro.test(pers_att)$p.value)
+
+print(shapiro_test_results)
+```
+
+<br><br>
+
+non-paramtric anova:
+```{r}
+kruskal_result <- kruskal.test(pers_att ~ condition_upd, data = data)
+kruskal_result
+```
+
+<br><br>
+
+post-hoc test
+```{r}
+library(rstatix)
+if (kruskal_result$p.value < 0.05) {
+  pairwise_result <- data %>%
+    pairwise_wilcox_test(pers_att ~ condition_upd, p.adjust.method = "bonferroni")
+  print(pairwise_result)
+}
+```
+
+<br><br>
+
+effect size
+```{r}
+library(rcompanion)
+epsilonSquared(x = data$pers_att, g = data$condition_upd)
+```
+
+<br><br>
+
+## descriptive statistics
+
+```{r}
+columns_to_exclude <- c("particip_id", "author_knowledge", "author_objectivity", 
+                        "author_adequacy", "author_smartness", "intent_direct", 
+                        "intent_manipulate", "intent_convince", "con_num", 
+                        "condition_upd", "text_gender", "expert", "pers_att", 
+                        "subject_sex", "subject_edu", "condition", "subject_age", 
+                        "react_pos")
+
+existing_columns_to_exclude <- intersect(columns_to_exclude, colnames(data))
+
+
+table_react <- data %>%
+  dplyr::select(-one_of(existing_columns_to_exclude)) %>%
+  mutate_if(is.character, as.factor)
+
+var_label(table_react$like) <- "like"
+var_label(table_react$share) <- "share"
+var_label(table_react$save) <- "save"
+var_label(table_react$dislike) <- "don't show me this"
+
+tbl_react <- table_react %>%
+  tbl_summary(
+    missing = "no",
+    type = list(like ~ "categorical",
+                share ~ "categorical",
+                save ~ "categorical",
+                dislike ~ "categorical"),
+    statistic = list(all_continuous() ~ "{mean} ({sd})", all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1, all_categorical() ~ 0)
+  )
+
+tbl_react %>%
+  as_gt() %>%
+  gtsave(filename = "tbl_react.html")
+
+View(tbl_react)
+```
+
+
+<br><br>
+
+**the distribution of perceived author’s expertise and perceived persuasion attempt across different intensity levels**
+
+```{r}
+
+# Box plot for pers_att across different levels of condition
+ggplot(data, aes(x = condition_upd, y = pers_att)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Persuasive Attempt across Different Conditions",
+       x = "Condition (Intensity)",
+       y = "Persuasive Attempt")
+
+# Box plot for expert across different levels of condition
+ggplot(data, aes(x = condition_upd, y = expert)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Expert across Different Conditions",
+       x = "Condition (Intensity)",
+       y = "Expert")
+```
+
+<br><br>
+
+```{r, warning=FALSE, message=FALSE}
+summary_data <- data %>%
+  group_by(condition_upd) %>%
+  summarise(mean_pers_att = mean(pers_att, na.rm = TRUE),
+            N = n())
+
+
+summary_gt <- summary_data %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Persuasive Attempt by Condition Intensity"
+  )
+
+
+# expert
+summary_data_expert <- data %>%
+  group_by(condition_upd) %>%
+  summarise(mean_expert = mean(expert, na.rm = TRUE),
+            N = n())
+
+
+summary_gt_expert <- summary_data_expert %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Expertise by Condition Intensity"
+  )
+```
+```{r, warning=FALSE, message=FALSE}
+
+webshot::install_phantomjs()
+
+# summary table for persuasive attempt
+summary_data <- data %>%
+  group_by(condition_upd) %>%
+  summarise(mean_pers_att = mean(pers_att, na.rm = TRUE),
+            N = n())
+
+summary_gt <- summary_data %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Persuasive Attempt by Condition Intensity"
+  )
+
+gtsave(summary_gt, "summary_gt.html")
+webshot("summary_gt.html", "summary_gt.png")
+
+# summary table for expertise
+summary_data_expert <- data %>%
+  group_by(condition_upd) %>%
+  summarise(mean_expert = mean(expert, na.rm = TRUE),
+            N = n())
+
+summary_gt_expert <- summary_data_expert %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Expertise by Condition Intensity"
+  )
+
+gtsave(summary_gt_expert, "summary_gt_expert.html")
+webshot("summary_gt_expert.html", "summary_gt_expert.png")
+
+img1 <- image_read("summary_gt.png")
+img2 <- image_read("summary_gt_expert.png")
+
+combined_img <- image_append(c(img1, img2), stack = TRUE)
+
+image_write(combined_img, path = "combined_summaries.png")
+```
+
+<br><br>
+
+**H1a: higher perceived author’s expertise leads to a higher likelihood of liking, sharing and saving**
+**H1b: lower perceived author’s expertise leads to a higher likelihood of pressing ‘don’t show me this’ button**
+
+```{r}
+# creating a factor variable (1 - presence of a positive reaction, 0 - absence) 
+data$react_pos <- case_when(data$like == 1 | data$share == 1 | data$save == 1 ~ 1, T ~ 0)
+
+data$react_pos = factor(data$react_pos, levels = 0:1, labels = c('no_react','any_react'))
+```
+
+<br><br>
+
+**positive reactions ~ perceived expertise**
+```{r}
+m1 = glm(react_pos~expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m1)
+```
+
+
+
+```{r}
+tab1 <- tab_model(m1, emph.p = F, dv.labels = 'Positive reaction',
+          pred.labels = c('Intercept',
+                          'Perceived author’s expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_prof'))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+sjPlot::plot_model(m1, type = 'pred', terms = c('expert'), axis.title = c('Perceived author’s expertise','Probability of Positive reaction', title = ''))
+```
+
+```{r, warning=FALSE, message=FALSE}
+# model fit
+pR2(m1)[4]
+hitmiss(m1)
+pROC::roc(data$react_pos, predict(m1, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**Likes ~ perceived expertise**
+```{r}
+m2 = glm(like~expert + condition_upd+ subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m2)
+```
+
+```{r, warning=FALSE, message=FALSE}
+tab2 <- tab_model(m2, emph.p = F, dv.labels = 'Like',
+          pred.labels = c('Intercept',
+                          'Perceived author’s expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_prof'))
+```
+
+```{r}
+sjPlot::plot_model(m2, type = 'pred', terms = c('expert'), axis.title = c('Perceived author’s expertise','Probability of like', title = ''))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# model fit
+pR2(m2)[4]
+hitmiss(m2)
+pROC::roc(data$react_pos, predict(m2, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+
+<br><br>
+
+**share ~ perceived expertise**
+```{r}
+m3 = glm(share~expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m3)
+```
+
+```{r, warning=FALSE, message=FALSE}
+tab3 <- tab_model(m3, emph.p = F, dv.labels = 'Share',
+          pred.labels = c('Intercept',
+                          'Perceived author’s expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_prof'))
+```
+
+```{r}
+sjPlot::plot_model(m1, type = 'pred', terms = c('expert'), axis.title = c('Perceived author’s expertise','Probability of Positive reaction', title = ''))
+```
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m3)[4]
+hitmiss(m3)
+pROC::roc(data$react_pos, predict(m3, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+
+<br><br>
+
+**save ~ perceived expertise**
+```{r}
+m4 = glm(save~expert + condition_upd + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m4)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+tab4 <- tab_model(m4, emph.p = F, dv.labels = 'save',
+          pred.labels = c('Intercept',
+                          'Perceived author’s expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_prof'))
+```
+
+```{r}
+sjPlot::plot_model(m1, type = 'pred', terms = c('expert'), axis.title = c('Perceived author’s expertise','Probability of Positive reaction', title = ''))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m4)[4]
+hitmiss(m4)
+pROC::roc(data$react_pos, predict(m4, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**don't show me this ~ perceived expertise**
+```{r}
+m5 = glm(dislike~expert +  condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m5)
+```
+
+<br><br>
+
+
+```{r, warning=FALSE, message=FALSE}
+tab5 <- tab_model(m5, emph.p = F, dv.labels = "Don't show me this",
+          pred.labels = c('Intercept',
+                          'Perceived author’s expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_prof'))
+print(tab5)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+sjPlot::plot_model(m5, type = 'pred', terms = c('expert'), axis.title = c('Perceived author’s expertise','Probability of Dislike', title = ''))
+```
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m5)[4]
+hitmiss(m5)
+pROC::roc(data$dislike, predict(m5, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**H2a: the higher perceived persuasion attempt, the higher is the likelihood of pressing ‘don’t show me this’ button**
+
+**H2b: the higher perceived persuasion attempt, the lower is the likelihood of likes, shares and saving**
+
+<br><br>
+
+**positive reactions ~ perceived persuasion**
+
+```{r}
+# logistic regression 
+m6 = glm(react_pos~pers_att+ condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m6)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+
+tab6 <- tab_model(m6, emph.p = F, dv.labels = 'Positive reaction',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'low_intensity','moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+sjPlot::plot_model(m6, type = 'pred', terms = c('pers_att'), axis.title = c('Perceived persuasion attempt','Probability of positive reactions', title = ''))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# McFadden’s pseudo-R^2: if higher than 0,8 - great, higher 0,5 - ok, <0.6 - not good
+library(pscl)
+pR2(m6)[4]
+# how good the model predicts, the closer to 100 - the better. if somewhere close to 100, but somewhere else to 0 - not great. It means that the data is skewed to one side 
+hitmiss(m6)
+# ROC_AUC: the closer to 1, the better, close to 0,5 - bad (prediction is no better than throwing a coin)
+pROC::roc(data$react_pos, predict(m6, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**like ~ perceived persuasion**
+```{r}
+m7 = glm(like~pers_att+ condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m7)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+tab7 <- tab_model(m7, emph.p = F, dv.labels = 'Like',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'low_intensity','moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+
+```{r}
+sjPlot::plot_model(m7, type = 'pred', terms = c('pers_att'), axis.title = c('Perceived persuasion attempt','Probability of Like', title = ''))
+```
+
+
+```{r}
+# McFadden’s pseudo-R^2: if higher than 0,8 - great, higher 0,5 - ok, <0.6 - not good
+library(pscl)
+pR2(m7)[4]
+# how good the model predicts, the closer to 100 - the better. if somewhere close to 100, but somewhere else to 0 - not great. It means that the data is skewed to one side 
+hitmiss(m7)
+# ROC_AUC: the closer to 1, the better, close to 0,5 - bad (prediction is no better than throwing a coin)
+pROC::roc(data$react_pos, predict(m7, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**share ~ perceived persuasion**
+```{r}
+m8 = glm(share~pers_att+ condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m8)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+tab8 <- tab_model(m8, emph.p = F, dv.labels = 'Share',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'low_intensity','moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+```{r}
+sjPlot::plot_model(m8, type = 'pred', terms = c('pers_att'), axis.title = c('Perceived persuasion attempt','Probability of share', title = ''))
+```
+
+
+```{r}
+# McFadden’s pseudo-R^2: if higher than 0,8 - great, higher 0,5 - ok, <0.6 - not good
+library(pscl)
+pR2(m8)[4]
+# how good the model predicts, the closer to 100 - the better. if somewhere close to 100, but somewhere else to 0 - not great. It means that the data is skewed to one side 
+hitmiss(m8)
+# ROC_AUC: the closer to 1, the better, close to 0,5 - bad (prediction is no better than throwing a coin)
+pROC::roc(data$react_pos, predict(m8, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**save ~ perceived persuasion**
+```{r}
+m9 = glm(save~pers_att+ condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m9)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+tab9 <- tab_model(m9, emph.p = F, dv.labels = 'Save',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+sjPlot::plot_model(m9, type = 'pred', terms = c('pers_att'), axis.title = c('Perceived persuasion attempt','Probability of save', title = ''))
+```
+
+```{r}
+library(pscl)
+pR2(m9)[4]
+hitmiss(m9)
+pROC::roc(data$react_pos, predict(m9, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**don't show me this ~ perceived persuasion**
+
+```{r}
+m10 = glm(dislike~pers_att+ condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+tab10 <- tab_model(m10, emph.p = F, dv.labels = "Don't show me this",
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+sjPlot::plot_model(m10, type = 'pred', terms = c('pers_att'), axis.title = c('Perceived persuasion attempt',"Probability of pressing 'don't show me this'", title = ''))
+```
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m10)[4]
+hitmiss(m10)
+pROC::roc(data$dislike, predict(m2, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+
+<br><br>
+
+**combining all tables into one**
+```{r, warning=FALSE, message=FALSE}
+tab_all_exp <- tab_model(m1, m2, m3, m4, m5, emph.p = FALSE, dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                     pred.labels = c('Intercept',
+                                     "Perceived author's expertise", 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+
+
+sjPlot::tab_model(m1, m2, m3, m4, m5, file = "combined_models_exp.html",
+                  dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                  pred.labels = c('Intercept',
+                                     "Perceived author's expertise", 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+tab_all_pers <- tab_model(m6, m7, m8, m9, m10, emph.p = FALSE, dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                     pred.labels = c('Intercept',
+                                     'Perceived persuasion attempt', 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+
+
+sjPlot::tab_model(m6, m7, m8, m9, m10, file = "combined_models_pers.html",
+                  dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                  pred.labels = c('Intercept',
+                                     'Perceived persuasion attempt', 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+```
+
+<br><br>
+
+## models with perceived expertise and persuasion attempt
+
+<br><br>
+
+**positive reactions**
+```{r}
+m_boss = glm(react_pos~pers_att + expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_boss)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+tab_model(m_boss, emph.p = F, dv.labels = "Positive reactions",
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'Perceived expertise', 'low_intensity', 'moderate_intensity', 'high_intensity', 'Sex_m', 'Age', 'Education_bac', 'Education_mag', 'Education_no_high', 'Education_no_sr', 'Education_other', 'Education_sr', 'Education_sr_prof'))
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m_boss)[4]
+hitmiss(m_boss)
+pROC::roc(data$react_pos, predict(m_boss, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+```{r}
+m_boss_l = glm(like~pers_att + expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_boss_l)
+```
+
+```{r}
+m_boss_sh = glm(share~pers_att + expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_boss_sh)
+```
+
+```{r}
+m_boss_s = glm(save~pers_att + expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_boss_s)
+```
+
+<br><br>
+
+**don't show me this ~ model with perceived expertise and persuasion attempt**
+```{r}
+m_boss2 = glm(dislike~pers_att + expert + condition_upd + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_boss2)
+```
+```{r, warning=FALSE, message=FALSE}
+pR2(m_boss2)[4]
+hitmiss(m_boss2)
+pROC::roc(data$dislike, predict(m_boss, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+<br><br>
+
+**combined table**
+```{r, warning=FALSE, message=FALSE}
+tab_all_boss <- tab_model(m_boss, m_boss_l, m_boss_sh, m_boss_s, m_boss2, emph.p = FALSE, dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                     pred.labels = c('Intercept', 'Perceived persuasion attempt',
+                                     "Perceived author's expertise", 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+
+
+sjPlot::tab_model(m_boss, m_boss_l, m_boss_sh, m_boss_s, m_boss2, file = "combined_models_boss.html",
+                  dv.labels = c("Positive reactions", "Like", "Share", "Save", "'Don't show me this'"),
+                  pred.labels = c('Intercept', 'Perceived persuasion attempt',
+                                     "Perceived author's expertise", 'low intensity', 'moderate intensity', 'high intensity', 'Sex m', 'Age', "bachelor's degree", "master's degree", 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+```
+
+<br><br>
+
+**H3: females are more likely than males to engage in all affective responses, like liking, sharing saving, and pressing ‘don’t show me this’ button**
+
+```{r, warning=FALSE, message=FALSE}
+data$any_react <- case_when(data$like == 1 | data$share == 1 | data$save == 1 | data$dislike == 1 ~ 1, T ~ 0)
+# females leave more reaction compared to males?
+chi_all <- chisq.test(table(data$subject_sex, data$any_react))
+chi_all
+```
+
+<br><br>
+
+**Like**
+
+```{r}
+chi_like<- chisq.test(table(data$subject_sex, data$like))
+chi_like
+str_like <- chi_like$stdres
+chi_like$stdres
+corrplot(chi_like$stdres, is.cor = FALSE)
+```
+
+
+<br><br>
+
+**visualisation for like**
+```{r}
+like_sex_table <- table(data$subject_sex, data$like)
+print(like_sex_table)
+
+females_liked <- like_sex_table["f", "1"]
+females_noliked <- like_sex_table["f", "0"]
+males_liked <- like_sex_table["m", "1"]
+males_noliked <- like_sex_table["m", "0"]
+
+counts <- data.frame(
+  Sex = rep(c("Females", "Males"), each = 2),
+  Likes_Status = rep(c("Likes", "No Likes"), 2),
+  Count = c(females_liked, females_noliked, males_liked, males_noliked)
+)
+
+p <- ggplot(counts, aes(x = Sex, y = Count, fill = Likes_Status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("Likes" = "lightblue", "No Likes" = "pink")) +
+  ggtitle("Number of Likes and No Likes by Sex") +
+  ylab("Count") +
+  xlab("Sex") +
+  theme_minimal()
+
+ggsave("like_sex_plot.png", plot = p, width = 8, height = 6, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**Share**
+
+```{r}
+chi_share<- chisq.test(table(data$subject_sex, data$share))
+chi_share
+```
+
+<br><br>
+
+**Save**
+
+```{r}
+chi_save<- chisq.test(table(data$subject_sex, data$save))
+chi_save
+str_save <- chi_save$stdres
+str_save
+corrplot(chi_save$stdres, is.cor = FALSE)
+```
+
+<br><br>
+
+**visualization for save**
+```{r, warning=FALSE, message=FALSE}
+save_sex_table <- table(data$subject_sex, data$save)
+print(save_sex_table)
+
+females_sav <- save_sex_table["f", "1"]
+females_nosav <- save_sex_table["f", "0"]
+males_sav <- save_sex_table["m", "1"]
+males_nosav <- save_sex_table["m", "0"]
+
+counts1 <- data.frame(
+  Sex = rep(c("Females", "Males"), each = 2),
+  Saves_Status = rep(c("Saves", "No Saves"), 2),
+  Count = c(females_sav, females_nosav, males_sav, males_nosav)
+)
+
+p1 <- ggplot(counts1, aes(x = Sex, y = Count, fill = Saves_Status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("Saves" = "lightblue", "No Saves" = "pink")) +
+  ggtitle("Number of Saves by Sex") +
+  ylab("Count") +
+  xlab("Sex") +
+  theme_minimal()
+
+ggsave("like_sav_plot.png", plot = p1, width = 8, height = 6, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**"Don't show me this"**
+
+```{r}
+chi_dis<- chisq.test(table(data$subject_sex, data$dislike))
+chi_dis
+str_dis <- chi_dis$stdres
+chi_dis$stdres
+corrplot(chi_dis$stdres, is.cor = FALSE)
+```
+
+<br><br>
+
+**visualization for don't show me this**
+```{r}
+d_sex_table <- table(data$subject_sex, data$dislike)
+print(d_sex_table)
+
+females_d <- d_sex_table["f", "1"]
+females_nod <- d_sex_table["f", "0"]
+males_d <- d_sex_table["m", "1"]
+males_nod <- d_sex_table["m", "0"]
+
+counts2 <- data.frame(
+  Sex = rep(c("Females", "Males"), each = 2),
+  D_Status = rep(c("D", "No D"), 2),
+  Count = c(females_d, females_nod, males_d, males_nod)
+)
+
+p2 <- ggplot(counts2, aes(x = Sex, y = Count, fill = D_Status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("D" = "lightblue", "No D" = "pink")) +
+  ggtitle("Number of 'do not show me this' by Sex") +
+  ylab("Count") +
+  xlab("Sex") +
+  theme_minimal()
+
+ggsave("like_d_plot.png", plot = p2, width = 8, height = 6, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**combining**
+```{r}
+library(png)
+library(grid)
+library(gridExtra)
+like_sex_plot <- readPNG("like_sex_plot.png")
+like_sav_plot <- readPNG("like_sav_plot.png")
+like_d_plot <- readPNG("like_d_plot.png")
+
+l_grob <- rasterGrob(like_sex_plot)
+s_grob <- rasterGrob(like_sav_plot)
+dis_grob <- rasterGrob(like_d_plot)
+
+lsd_plot <- grid.arrange(l_grob, s_grob, dis_grob, nrow = 1)
+
+ggsave("l_s_d.png", plot = lsd_plot, width = 12, height = 4, units = "in", dpi = 300)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+str_like <- as.data.frame(str_like)
+str_save <- as.data.frame(str_save)
+str_dis <- as.data.frame(str_dis)
+
+str_like$Test <- "Like"
+str_save$Test <- "Save"
+str_dis$Test <- "'Don't show me this'"
+
+combined_residuals <- rbind(str_like, str_save, str_dis)
+
+html_rsd <- combined_residuals %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals for gender and reactions"
+  ) %>%
+  cols_label(
+    Var1 = "Sex",
+    Var2 = "Reaction",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_rsd, "combined_residuals.html")
+```
+
+
+```{r}
+library(dplyr)
+library(broom)
+library(knitr)
+library(kableExtra)
+
+chi_all_tidy <- tidy(chi_all)
+chi_like_tidy <- tidy(chi_like)
+chi_share_tidy <- tidy(chi_share)
+chi_save_tidy <- tidy(chi_save)
+chi_dis_tidy <- tidy(chi_dis)
+
+chi_all_tidy <- chi_all_tidy %>% mutate(test = "all")
+chi_like_tidy <- chi_like_tidy %>% mutate(test = "like")
+chi_share_tidy <- chi_share_tidy %>% mutate(test = "share")
+chi_save_tidy <- chi_save_tidy %>% mutate(test = "save")
+chi_dis_tidy <- chi_dis_tidy %>% mutate(test = "don't show me this")
+
+results <- bind_rows(chi_all_tidy, chi_like_tidy, chi_share_tidy, chi_save_tidy, chi_dis_tidy)
+
+results <- results %>% select(test, statistic, p.value, parameter, method)
+
+results %>%
+  kable(format = "html", caption = "Chi-Squared Test Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+save_kable(results %>%
+  kable(format = "html", caption = "Chi-Squared Test Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")),
+  file = "chi_squared_results.html")
+```
+
+
+<br><br>
+
+**H4: gender neutral texts elicit more reactions (likes, shares, savings) compared to gender specific texts** 
+
+
+```{r}
+# creating a binomial variable (neutral/not neutral)
+data$text_neutral1 <- as.factor(case_when(data$text_gender == "f" | data$text_gender == "m" ~ "not_neutral", T~"neutral"))
+data$text_neutral2 <- as.factor(case_when(data$text_gender == "n" ~ "neutral", data$text_gender == data$subject_sex ~ "same_gender", data$text_gender != data$subject_sex ~ "dif_gender"))
+# variables with the number of reactions
+data$react_num <- data$like + data$share + data$save
+```
+
+<br><br>
+
+**gender neutral texts receive more reactions than gender specific texts**
+```{r}
+
+# all reactions
+chi1_all <- chisq.test(table(data$react_num,data$text_neutral1))
+chi1_all
+corrplot(chi1_all$stdres, is.cor = FALSE)
+neut_1 <- chi1_all$stdres
+neut_1
+
+# like
+chi1_like <- chisq.test(table(data$like,data$text_neutral1))
+chi1_like
+corrplot(chi1_like$stdres, is.cor = FALSE)
+neut_2 <- chi1_like$stdres
+neut_2
+
+#share
+chi1_share <- chisq.test(table(data$share,data$text_neutral1))
+chi1_share
+corrplot(chi1_share$stdres, is.cor = FALSE)
+neut_3 <- chi1_share$stdres
+neut_3
+
+#save
+chi1_save <- chisq.test(table(data$save,data$text_neutral1))
+chi1_save
+
+# dislike
+chi1_dis <- chisq.test(table(data$dislike,data$text_neutral1))
+chi1_dis
+corrplot(chi1_dis$stdres, is.cor = FALSE)
+neut_4 <- chi1_dis$stdres
+neut_4
+```
+<br><br>
+
+**table for the results**
+```{r}
+library(dplyr)
+library(broom)
+library(knitr)
+library(kableExtra)
+# Tidy the results using broom
+chi1_all_tidy <- tidy(chi1_all)
+chi1_like_tidy <- tidy(chi1_like)
+chi1_share_tidy <- tidy(chi1_share)
+chi1_save_tidy <- tidy(chi1_save)
+chi1_dis_tidy <- tidy(chi1_dis)
+
+# Add test identifiers
+chi1_all_tidy <- chi1_all_tidy %>% mutate(test = "all")
+chi1_like_tidy <- chi1_like_tidy %>% mutate(test = "like")
+chi1_share_tidy <- chi1_share_tidy %>% mutate(test = "share")
+chi1_save_tidy <- chi1_save_tidy %>% mutate(test = "save")
+chi1_dis_tidy <- chi1_dis_tidy %>% mutate(test = "don't show me this")
+
+# Combine the results into a single data frame
+results1 <- bind_rows(chi1_all_tidy, chi1_like_tidy, chi1_share_tidy, chi1_save_tidy, chi1_dis_tidy)
+
+# Select and rename columns for clarity
+results1 <- results1 %>% select(test, statistic, p.value, parameter, method)
+
+# Save the data frame as an HTML table using knitr and kableExtra
+results1 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (neuntral vs non-neutral)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+save_kable(results1 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (neuntral vs non-neutral)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")),
+  file = "chi_squared_results1.html")
+```
+
+<br><br>
+
+**visualisation: like**
+```{r}
+likes_counts <- table(data$text_neutral1, data$like)
+likes_df <- as.data.frame(likes_counts)
+
+colnames(likes_df) <- c("Text_Type", "Likes", "Count")
+
+likes_plot <- ggplot(likes_df, aes(x = Text_Type, y = Count, fill = Likes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Likes in Neutral vs. Non-Neutral Texts",
+       x = "Text Type",
+       y = "Count of Likes",
+       fill = "Likes") +
+  theme_minimal()
+
+ggsave("likes_plot.png", plot = likes_plot, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: share**
+```{r}
+shares_counts <- table(data$text_neutral1, data$share)
+shares_df <- as.data.frame(shares_counts)
+
+colnames(shares_df) <- c("Text_Type", "Shares", "Count")
+
+shares_plot <- ggplot(shares_df, aes(x = Text_Type, y = Count, fill = Shares)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Shares in Neutral vs. Non-Neutral Texts",
+       x = "Text Type",
+       y = "Count of Shares",
+       fill = "Shares") +
+  theme_minimal()
+
+ggsave("shares_plot.png", plot = shares_plot, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: don't show me this**
+```{r}
+d_counts <- table(data$text_neutral1, data$dislike)
+d_df <- as.data.frame(d_counts)
+
+colnames(d_df) <- c("Text_Type", "D", "Count")
+
+d_plot <- ggplot(d_df, aes(x = Text_Type, y = Count, fill = D)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of don't show me this in Neutral vs. Non-Neutral Texts",
+       x = "Text Type",
+       y = "Count of don't show me this",
+       fill = "D") +
+  theme_minimal()
+
+ggsave("d_plot.png", plot = d_plot, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**saving a combined plot**
+```{r}
+library(gridExtra)
+library(png)
+library(grid)
+
+likes_plot1 <- readPNG("likes_plot.png")
+shares_plot1 <- readPNG("shares_plot.png")
+d_plot1 <- readPNG("d_plot.png")
+
+likes_grob <- rasterGrob(likes_plot1)
+shares_grob <- rasterGrob(shares_plot1)
+d_grob <- rasterGrob(d_plot1)
+
+combined_plot <- grid.arrange(likes_grob, shares_grob, d_grob, nrow = 1)
+
+ggsave("combined_plot_gr.png", plot = combined_plot, width = 12, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**neutral, female, male**
+```{r}
+# all reactions
+
+chi2_all <- chisq.test(table(data$react_num,data$text_gender))
+chi2_all
+corrplot(chi2_all$stdres, is.cor = FALSE)
+gender_1 <- chi2_all$stdres
+gender_1
+
+# like
+chi2_like <- chisq.test(table(data$like,data$text_gender))
+chi2_like
+corrplot(chi2_like$stdres, is.cor = FALSE)
+gender_2 <- chi2_like$stdres
+gender_2
+
+#share
+chi2_share <- chisq.test(table(data$share,data$text_gender))
+chi2_share
+corrplot(chi2_share$stdres, is.cor = FALSE)
+gender_3 <- chi2_share$stdres
+gender_3
+
+#save
+chi2_save <- chisq.test(table(data$save,data$text_gender))
+chi2_save
+
+# dislike
+chi2_dis <- chisq.test(table(data$dislike,data$text_gender))
+chi2_dis
+corrplot(chi2_dis$stdres, is.cor = FALSE)
+gender_4 <- chi2_dis$stdres
+gender_4
+
+```
+
+<br><br>
+
+**table for the results**
+```{r}
+# Tidy the results using broom
+chi2_all_tidy <- tidy(chi2_all)
+chi2_like_tidy <- tidy(chi2_like)
+chi2_share_tidy <- tidy(chi2_share)
+chi2_save_tidy <- tidy(chi2_save)
+chi2_dis_tidy <- tidy(chi2_dis)
+
+# Add test identifiers
+chi2_all_tidy <- chi2_all_tidy %>% mutate(test = "all")
+chi2_like_tidy <- chi2_like_tidy %>% mutate(test = "like")
+chi2_share_tidy <- chi2_share_tidy %>% mutate(test = "share")
+chi2_save_tidy <- chi2_save_tidy %>% mutate(test = "save")
+chi2_dis_tidy <- chi2_dis_tidy %>% mutate(test = "don't show me this")
+
+# Combine the results into a single data frame
+results2 <- bind_rows(chi2_all_tidy, chi2_like_tidy, chi2_share_tidy, chi2_save_tidy, chi2_dis_tidy)
+
+# Select and rename columns for clarity
+results2 <- results2 %>% select(test, statistic, p.value, parameter, method)
+
+# Save the data frame as an HTML table using knitr and kableExtra
+results2 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (neuntral vs male vs female)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+save_kable(results2 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (neuntral vs male vs female)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")),
+  file = "chi_squared_results2.html")
+```
+
+<br><br>
+
+**visualisation: like**
+```{r}
+likes_counts1 <- table(data$text_gender, data$like)
+likes_df1 <- as.data.frame(likes_counts1)
+
+colnames(likes_df1) <- c("Text_Type", "Likes", "Count")
+
+likes_plot1 <- ggplot(likes_df1, aes(x = Text_Type, y = Count, fill = Likes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Likes in Neutral vs. male vs female texts",
+       x = "Text Type",
+       y = "Count of Likes",
+       fill = "Likes") +
+  theme_minimal()
+print(likes_plot1)
+
+ggsave("likes_plot1.png", plot = likes_plot1, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: share**
+```{r}
+shares_counts1 <- table(data$text_gender, data$share)
+shares_df1 <- as.data.frame(shares_counts1)
+
+colnames(shares_df1) <- c("Text_Type", "Shares", "Count")
+
+shares_plot1 <- ggplot(shares_df1, aes(x = Text_Type, y = Count, fill = Shares)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Shares in Neutral vs. female vs male texts",
+       x = "Text Type",
+       y = "Count of Shares",
+       fill = "Shares") +
+  theme_minimal()
+
+ggsave("shares_plot1.png", plot = shares_plot1, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: don't show me this**
+```{r}
+d_counts1 <- table(data$text_gender, data$dislike)
+d_df1 <- as.data.frame(d_counts1)
+
+colnames(d_df1) <- c("Text_Type", "D", "Count")
+
+d_plot1 <- ggplot(d_df1, aes(x = Text_Type, y = Count, fill = D)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of don't show me this in Neutral vs. female vs male texts",
+       x = "Text Type",
+       y = "Count of don't show me this",
+       fill = "D") +
+  theme_minimal()
+
+ggsave("d_plot1.png", plot = d_plot1, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**saving a combined plot**
+```{r}
+likes_plot2 <- readPNG("likes_plot1.png")
+shares_plot2 <- readPNG("shares_plot1.png")
+d_plot2 <- readPNG("d_plot1.png")
+
+likes_grob1 <- rasterGrob(likes_plot2)
+shares_grob1 <- rasterGrob(shares_plot2)
+d_grob1 <- rasterGrob(d_plot2)
+
+# Combine the plots into a single image
+combined_plot1 <- grid.arrange(likes_grob1, shares_grob1, d_grob1, nrow = 1)
+
+# Save the combined plot
+ggsave("combined_plot_gr1.png", plot = combined_plot1, width = 12, height = 4, units = "in", dpi = 300)
+```
+
+
+<br><br>
+
+**same vs different gender**
+```{r}
+chi3_all <- chisq.test(table(data$react_num,data$text_neutral2))
+chi3_all
+corrplot(chi3_all$stdres, is.cor = FALSE)
+vs_1 <- chi3_all$stdres
+vs_1
+
+# like
+chi3_like <- chisq.test(table(data$like,data$text_neutral2))
+chi3_like
+corrplot(chi3_like$stdres, is.cor = FALSE)
+vs_2 <- chi3_like$stdres
+vs_2
+
+#share
+chi3_share <- chisq.test(table(data$share,data$text_neutral2))
+chi3_share
+corrplot(chi3_share$stdres, is.cor = FALSE)
+vs_3 <- chi3_share$stdres
+vs_3
+
+#save
+chi3_save <- chisq.test(table(data$save,data$text_neutral2))
+chi3_save
+
+# dislike
+chi3_dis <- chisq.test(table(data$dislike,data$text_neutral2))
+chi3_dis
+corrplot(chi3_dis$stdres, is.cor = FALSE)
+vs_4 <- chi3_dis$stdres
+vs_4
+
+```
+
+<br><br>
+
+**table for the results**
+```{r}
+# Tidy the results using broom
+chi3_all_tidy <- tidy(chi3_all)
+chi3_like_tidy <- tidy(chi3_like)
+chi3_share_tidy <- tidy(chi3_share)
+chi3_save_tidy <- tidy(chi3_save)
+chi3_dis_tidy <- tidy(chi3_dis)
+
+# Add test identifiers
+chi3_all_tidy <- chi3_all_tidy %>% mutate(test = "all")
+chi3_like_tidy <- chi3_like_tidy %>% mutate(test = "like")
+chi3_share_tidy <- chi3_share_tidy %>% mutate(test = "share")
+chi3_save_tidy <- chi3_save_tidy %>% mutate(test = "save")
+chi3_dis_tidy <- chi3_dis_tidy %>% mutate(test = "don't show me this")
+
+# Combine the results into a single data frame
+results3 <- bind_rows(chi3_all_tidy, chi3_like_tidy, chi3_share_tidy, chi3_save_tidy, chi3_dis_tidy)
+
+# Select and rename columns for clarity
+results3 <- results2 %>% select(test, statistic, p.value, parameter, method)
+
+# Save the data frame as an HTML table using knitr and kableExtra
+results3 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (same vs different gender)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+save_kable(results3 %>%
+  kable(format = "html", caption = "Chi-Squared Test Results (same vs different gender)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")),
+  file = "chi_squared_results3.html")
+```
+
+<br><br>
+
+**visualisation: like**
+```{r}
+likes_counts2 <- table(data$text_neutral2, data$like)
+likes_df2 <- as.data.frame(likes_counts2)
+
+colnames(likes_df2) <- c("Text_Type", "Likes", "Count")
+
+likes_plot2 <- ggplot(likes_df2, aes(x = Text_Type, y = Count, fill = Likes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Likes in Neutral vs. same vs different gender texts",
+       x = "Text Type",
+       y = "Count of Likes",
+       fill = "Likes") +
+  theme_minimal()
+
+ggsave("likes_plot2.png", plot = likes_plot2, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: share**
+```{r}
+shares_counts2 <- table(data$text_neutral2, data$share)
+shares_df2 <- as.data.frame(shares_counts2)
+
+colnames(shares_df2) <- c("Text_Type", "Shares", "Count")
+
+shares_plot2 <- ggplot(shares_df2, aes(x = Text_Type, y = Count, fill = Shares)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of Shares in Neutral vs. same vs different gender texts",
+       x = "Text Type",
+       y = "Count of Shares",
+       fill = "Shares") +
+  theme_minimal()
+
+ggsave("shares_plot2.png", plot = shares_plot2, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**visualisation: don't show me this**
+```{r}
+d_counts2 <- table(data$text_neutral2, data$dislike)
+d_df2 <- as.data.frame(d_counts2)
+
+colnames(d_df2) <- c("Text_Type", "D", "Count")
+
+d_plot2 <- ggplot(d_df2, aes(x = Text_Type, y = Count, fill = D)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Distribution of don't show me this in Neutral vs. same vs different gender texts",
+       x = "Text Type",
+       y = "Count of don't show me this",
+       fill = "D") +
+  theme_minimal()
+
+ggsave("d_plot2.png", plot = d_plot2, width = 6, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**saving a combined plot**
+```{r}
+likes_plot3 <- readPNG("likes_plot2.png")
+shares_plot3 <- readPNG("shares_plot2.png")
+d_plot3 <- readPNG("d_plot2.png")
+
+likes_grob2 <- rasterGrob(likes_plot3)
+shares_grob2 <- rasterGrob(shares_plot3)
+d_grob2 <- rasterGrob(d_plot3)
+
+# Combine the plots into a single image
+combined_plot2 <- grid.arrange(likes_grob2, shares_grob2, d_grob2, nrow = 1)
+
+# Save the combined plot
+ggsave("combined_plot_gr2.png", plot = combined_plot2, width = 12, height = 4, units = "in", dpi = 300)
+```
+
+<br><br>
+
+**standardised residuals for all the tests**
+
+```{r}
+neut_1 <- as.data.frame(neut_1)
+neut_2 <- as.data.frame(neut_2)
+neut_3 <- as.data.frame(neut_3)
+neut_4 <- as.data.frame(neut_4)
+
+neut_1$Test <- "neutral vs non neutral: All"
+neut_2$Test <- "neutral vs non neutral: Like"
+neut_3$Test <- "neutral vs non neutral: Share"
+neut_4$Test <- "neutral vs non neutral: 'Don't show me this'"
+
+combined_neut <- rbind(neut_1, neut_2, neut_3, neut_4)
+
+html_rsd_neut <- combined_neut %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals (neutral vs non-neutral)"
+  ) %>%
+  cols_label(
+    Var1 = "Sex",
+    Var2 = "Reaction",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_rsd_neut, "combined_residuals_neut.html")
+```
+
+```{r}
+gender_1 <- as.data.frame(gender_1)
+gender_2 <- as.data.frame(gender_2)
+gender_3 <- as.data.frame(gender_3)
+gender_4 <- as.data.frame(gender_4)
+
+gender_1$Test <- "all genders : All"
+gender_2$Test <- "all genders : Like"
+gender_3$Test <- "all genders : Share"
+gender_4$Test <- "all genders : 'Don't show me this'"
+
+combined_gender <- rbind(gender_1, gender_2, gender_3, gender_4)
+
+html_rsd_gen <- combined_gender %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals (neutral vs female vs male"
+  ) %>%
+  cols_label(
+    Var1 = "Sex",
+    Var2 = "Reaction",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_rsd_gen, "combined_residuals_gen.html")
+```
+
+```{r}
+vs_1 <- as.data.frame(vs_1)
+vs_2 <- as.data.frame(vs_2)
+vs_3 <- as.data.frame(vs_3)
+vs_4 <- as.data.frame(vs_4)
+
+vs_1$Test <- "same vs different genders: All"
+vs_2$Test <- "same vs different genders: Like"
+vs_3$Test <- "same vs different genders: Share"
+vs_4$Test <- "same vs different genders: 'Don't show me this'"
+
+combined_vs <- rbind(vs_1, vs_2, vs_3, vs_4)
+
+html_rsd_vs <- combined_vs %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals (neutral vs same gender vs different gender)"
+  ) %>%
+  cols_label(
+    Var1 = "Sex",
+    Var2 = "Reaction",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_rsd_vs, "combined_residuals_vs.html")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+
+combined_residuals3 <- rbind(neut_1, gender_1, vs_1)
+
+html_rsd3 <- combined_residuals3 %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals for texts categories and all positive reactions"
+  ) %>%
+  cols_label(
+    Var1 = "Sex",
+    Var2 = "Reaction",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_rsd3, "combined_residuals3.html")
+```
+
+<br><br>
+
+**H5: the decision of sharing or saving a post is positively associated with liking**
+
+```{r}
+# LIKES ARE ASSOCIATED WITH SHARES
+
+contingency_table <- table(data$like, data$share)
+
+rownames(contingency_table) <- paste("Likes:", rownames(contingency_table))
+colnames(contingency_table) <- paste("Shares:", colnames(contingency_table))
+
+chi_like_share <- chisq.test(contingency_table)
+chi_like_share
+corrplot(chi_like_share$stdres, is.cor = FALSE, 
+         title = "Standardized Residuals of Chi-Squared Test for Likes and Shares",
+         mar = c(0, 0, 2, 0))
+chi_like_share_res <- chi_like_share$stdres
+chi_like_share_res
+```
+
+<br><br>
+
+**checking for negative association between like and share**
+```{r}
+contingency_table <- table(data$like, data$share)
+
+library(vcd)
+assoc_stats1 <- assocstats(contingency_table)
+```
+
+
+```{r}
+# LIKES ARE ASSOCIATED WITH SAVES
+
+contingency_table1 <- table(data$like, data$save)
+
+rownames(contingency_table1) <- paste("Likes:", rownames(contingency_table1))
+colnames(contingency_table1) <- paste("Saves:", colnames(contingency_table1))
+
+chi_like_save <- chisq.test(contingency_table1)
+chi_like_save
+corrplot(chi_like_save$stdres, is.cor = FALSE, 
+         title = "Standardized Residuals of Chi-Squared Test for Likes and Saves",
+         mar = c(0, 0, 2, 0))
+chi_like_save_res <- chi_like_save$stdres
+```
+
+<br><br>
+
+**Cramer's V**
+```{r}
+contingency_table1 <- table(data$like, data$save)
+
+library(vcd)
+assoc_stats2 <- assocstats(contingency_table1)
+```
+
+<br><br>
+
+**combined standardized residuals**
+```{r}
+chi_like_share_res <- as.data.frame(chi_like_share_res)
+chi_like_save_res <- as.data.frame(chi_like_save_res)
+
+chi_like_share_res$Test <- "likes and shares"
+chi_like_save_res$Test <- "likes and saves"
+
+combined_inter <- rbind(chi_like_share_res, chi_like_save_res)
+print(combined_inter)
+html_combined_inter <- combined_inter %>%
+  gt() %>%
+  tab_header(
+    title = "Combined Standardized Residuals for Interconnections"
+  ) %>%
+  cols_label(
+    Var1 = "Likes",
+    Var2 = "Shares",
+    Freq = "Standardized Residual",
+    Test = "Test"
+  )
+
+gtsave(html_combined_inter, "combined_residuals_inter.html")
+```
+
+<br><br>
+
+**combined visualization for Chi-Square**
+```{r}
+chi_like_share_tidy <- tidy(chi_like_share)
+chi_like_save_tidy <- tidy(chi_like_save)
+
+chi_like_share_tidy <- chi_like_share_tidy %>% mutate(test = "like and share")
+chi_like_save_tidy <- chi_like_save_tidy %>% mutate(test = "like and save")
+
+ress <- bind_rows(chi_like_share_tidy, chi_like_save_tidy)
+
+ress <- ress %>% select(test, statistic, p.value, parameter, method)
+
+ress %>%
+  kable(format = "html", caption = "Chi-Squared Test Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+save_kable(ress %>%
+  kable(format = "html", caption = "Chi-Squared Test Results for Interconnections") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")),
+  file = "chi_squared_interconnections.html")
+```
+
+<br><br>
+
+**combined Cramer's V visualization**
+```{r}
+library(vcd)
+library(htmlTable)
+library(htmltools)
+
+combined_stats <- data.frame(
+  Test = c("Likes vs Shares", "Likes vs Saves"),
+  `Chi-Squared Value` = c(assoc_stats1$chisq_tests[1, "X^2"], assoc_stats2$chisq_tests[1, "X^2"]),
+  `P-value` = c(assoc_stats1$chisq_tests[1, "P(> X^2)"], assoc_stats2$chisq_tests[1, "P(> X^2)"]),
+  `Cramer's V` = c(assoc_stats1$cramer, assoc_stats2$cramer)
+)
+
+html_table <- htmlTable(combined_stats, 
+                        caption = "Association Statistics for Chi-Squared Tests")
+
+html_output <- tagList(
+  tags$html(
+    tags$head(
+      tags$title("Association Statistics for Chi-Squared Tests")
+    ),
+    tags$body(
+      tags$h1("Association Statistics for Chi-Squared Tests"),
+      html_table
+    )
+  )
+)
+
+save_html(html_output, "combined_assoc_stats_results.html")
+```
+
+
+**final regressions**
+```{r}
+m_fin_l = glm(like~pers_att+ expert + condition_upd + text_gender + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_fin_l)
+```
+
+```{r, warning=FALSE, message=FALSE}
+tab_fin_l <- tab_model(m_fin_l, emph.p = F, dv.labels = 'Like',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'textgender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+tab_fin_l
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+pR2(m_fin_l)[4]
+hitmiss(m_fin_l)
+pROC::roc(data$like, predict(m_fin_l, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+```{r}
+m_fin_sh = glm(share~pers_att+ expert + condition_upd + text_gender + subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_fin_sh)
+```
+```{r, warning=FALSE, message=FALSE}
+tab_fin_sh <- tab_model(m_fin_sh, emph.p = F, dv.labels = 'Share',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'textgender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+tab_fin_sh
+```
+
+```{r}
+pR2(m_fin_sh)[4]
+hitmiss(m_fin_sh)
+pROC::roc(data$share, predict(m_fin_sh, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+
+```{r}
+m_fin_s = glm(save~pers_att+ expert + condition_upd + text_gender +  subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_fin_s)
+```
+
+```{r, warning=FALSE, message=FALSE}
+tab_fin_s <- tab_model(m_fin_s, emph.p = F, dv.labels = 'Save',
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'textgender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+tab_fin_s
+```
+
+```{r}
+pR2(m_fin_s)[4]
+hitmiss(m_fin_s)
+pROC::roc(data$save, predict(m_fin_s, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+```{r}
+m_fin_d = glm(dislike~pers_att+ expert + condition_upd + text_gender +  subject_sex + subject_age + subject_edu, data, family = binomial)
+summary(m_fin_d)
+```
+
+```{r, warning=FALSE, message=FALSE}
+tab_fin_d <- tab_model(m_fin_d, emph.p = F, dv.labels = "don't show me this",
+          pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'text gender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+tab_fin_d
+```
+
+```{r}
+pR2(m_fin_d)[4]
+hitmiss(m_fin_d)
+pROC::roc(data$dislike, predict(m_fin_d, newdata = data, type = 'response'), plot = TRUE, print.auc = TRUE)
+```
+
+**combined**
+
+```{r, warning=FALSE, message=FALSE}
+tab_final <- tab_model(m_fin_l, m_fin_sh, m_fin_s, m_fin_d, emph.p = FALSE, dv.labels = c("Like", "Share", "Save", "'Don't show me this'"),
+                     pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'text gender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+
+
+sjPlot::tab_model(m_fin_l, m_fin_sh, m_fin_s, m_fin_d, file = "combined_models_final.html",
+                  dv.labels = c("Like", "Share", "Save", "'Don't show me this'"),
+                  pred.labels = c('Intercept',
+                          'Perceived persuasion attempt', 'perceived expertise', 'low intensity', 'moderate intensity', 'high intensity', 'text gender male', 'text gender neutral', 'Sex m', 'Age', 'bachelor', 'masters', 'no higher', 'no secondary', 'other', 'secondary', 'secondary professional'))
+```
+
+
